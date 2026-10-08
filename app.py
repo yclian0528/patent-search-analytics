@@ -2,9 +2,11 @@
 
 from pathlib import Path
 
+import altair as alt
 import pandas as pd
 import streamlit as st
 
+from patents.analytics import applicant_ranking, ipc_distribution, yearly_trend
 from patents.data import DEFAULT_DATA_PATH, initialize_data
 from patents.search import SearchQuery, filter_patents
 
@@ -150,6 +152,101 @@ def render_patent_detail(results: pd.DataFrame, selected_no: str) -> None:
     st.markdown(f"**羅卡諾分類：** {format_value(patent['locarno'])}")
 
 
+def render_analysis(results: pd.DataFrame) -> None:
+    """Render one analysis chart for the current search results."""
+    st.subheader("統計分析")
+    st.caption(f"目前分析範圍為 {len(results)} 筆符合檢索條件的專利。")
+    method = st.segmented_control(
+        "分析方法",
+        options=("申請人排名", "年度趨勢", "IPC 分布"),
+        default="申請人排名",
+        selection_mode="single",
+        width="stretch",
+    )
+
+    if method == "年度趨勢":
+        trend = yearly_trend(results)
+        trend_chart = (
+            alt.Chart(trend)
+            .mark_line(point=True, color="#2563EB")
+            .encode(
+                x=alt.X(
+                    "publication_year:O",
+                    title="公告年份",
+                    sort="ascending",
+                    axis=alt.Axis(labelAngle=0),
+                ),
+                y=alt.Y(
+                    "patent_count:Q",
+                    title="專利件數",
+                    axis=alt.Axis(
+                        format="d",
+                        tickMinStep=1,
+                        titleAngle=0,
+                        titleAnchor="end",
+                    ),
+                ),
+                tooltip=[
+                    alt.Tooltip("publication_year:O", title="公告年份"),
+                    alt.Tooltip("patent_count:Q", title="專利件數", format="d"),
+                ],
+            )
+            .properties(height=420)
+        )
+        st.altair_chart(trend_chart, width="stretch")
+        st.caption("依公告年份統計；每件專利計入一個年度。")
+    elif method == "IPC 分布":
+        distribution = ipc_distribution(results, top_n=10)
+        ipc_chart = (
+            alt.Chart(distribution)
+            .mark_bar(color="#0F766E")
+            .encode(
+                x=alt.X(
+                    "ipc_prefix:N",
+                    title="IPC 前四碼",
+                    sort=None,
+                    axis=alt.Axis(labelAngle=0),
+                ),
+                y=alt.Y(
+                    "patent_count:Q",
+                    title="專利件數",
+                    axis=alt.Axis(
+                        format="d",
+                        tickMinStep=1,
+                        titleAngle=0,
+                        titleAnchor="end",
+                    ),
+                ),
+                tooltip=[
+                    alt.Tooltip("ipc_prefix:N", title="IPC 前四碼"),
+                    alt.Tooltip("patent_count:Q", title="專利件數", format="d"),
+                ],
+            )
+            .properties(height=420)
+        )
+        st.altair_chart(ipc_chart, width="stretch")
+        st.caption(
+            "顯示前 10 名 IPC 前綴；同一專利的相同前綴只計一次，無 IPC 資料者不計。"
+        )
+    else:
+        ranking = applicant_ranking(results, top_n=10)
+        ranking_table = ranking.assign(
+            rank=range(1, len(ranking) + 1)
+        )[["rank", "applicant", "patent_count"]].rename(
+            columns={
+                "rank": "排名",
+                "applicant": "申請人",
+                "patent_count": "專利件數",
+            }
+        )
+        # Keep rank as a visible column and render counts as text so that
+        # Streamlit aligns them to the left with the applicant names.
+        ranking_table["排名"] = ranking_table["排名"].astype(str)
+        ranking_table["專利件數"] = ranking_table["專利件數"].astype(str)
+        st.table(ranking_table)
+        st.caption("顯示前 10 名中文申請人；共同申請案件會分別計入各申請人。")
+
+
 def load_data_or_stop(path: Path) -> tuple[pd.DataFrame, dict]:
     """Load app data and show a user-facing error if initialization fails."""
     try:
@@ -179,20 +276,26 @@ def main() -> None:
         st.info("找不到符合條件的專利，請調整檢索條件。")
         return
 
-    st.subheader("檢索結果")
-    st.caption("表格內容僅供檢視；勾選任一列可在下方查看完整資料。")
-    result_table = build_result_table(results)
-    selection = st.dataframe(
-        result_table,
-        hide_index=True,
-        width="stretch",
-        on_select="rerun",
-        selection_mode="single-row",
-        key="patent_result_table",
-    )
-    selected_no = get_selected_patent_no(result_table, selection.selection.rows)
-    st.divider()
-    render_patent_detail(results, selected_no)
+    browse_tab, analysis_tab = st.tabs(("專利瀏覽", "統計分析"))
+
+    with browse_tab:
+        st.subheader("檢索結果")
+        st.caption("表格內容僅供檢視；勾選任一列可在下方查看完整資料。")
+        result_table = build_result_table(results)
+        selection = st.dataframe(
+            result_table,
+            hide_index=True,
+            width="stretch",
+            on_select="rerun",
+            selection_mode="single-row",
+            key="patent_result_table",
+        )
+        selected_no = get_selected_patent_no(result_table, selection.selection.rows)
+        st.divider()
+        render_patent_detail(results, selected_no)
+
+    with analysis_tab:
+        render_analysis(results)
 
 
 if __name__ == "__main__":
