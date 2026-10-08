@@ -82,6 +82,12 @@ def build_metadata(df: pd.DataFrame, original_columns: list[str]) -> dict:
         "columns": list(original_columns),
         "total_count": len(df),
         "patent_types": sorted(df["type"].dropna().unique().tolist()),
+        "applicant_options": sorted({
+            applicant
+            for field in ("applicants", "applicants_en")
+            for applicants in df[field]
+            for applicant in applicants
+        }),
         "ipc_prefixes": sorted({code[:4] for codes in df["_ipc"] for code in codes}),
     }
     for field in DATE_FIELDS:
